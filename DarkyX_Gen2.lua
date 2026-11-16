@@ -1,5 +1,5 @@
 local DarkyX = {}
-DarkyX.Version = "gen2-rework+pill-buttons+floating-side-tabs+header-topbar+sliders-icon+skipmode"
+DarkyX.Version = "gen2-rework2+tile-tabs+header-search+tab-menu+full-header+skip-loading-only"
 DarkyX.Debug = false -- true = print DarkyX messages to the console (off by default so nothing is written to the output log)
 
 local Players = game:GetService("Players")
@@ -2520,8 +2520,9 @@ local function createWindowImpl(self, config)
     window._Input = UserInputService
     window._Guard = Security.guard(screenGui, window)
 
-    -- Skipmode = true : no LoadingTitle, no intro, no open / close animation (the window is simply there). Effect is
-    --                   always ON by default now (Effect = false is the only way to turn it off).
+    -- Skipmode = true : skips ONLY the LoadingTitle (the big title that plays first). Everything else stays as it is:
+    --                   the intro / open / close animations and the light effect are ALWAYS on automatically
+    --                   (Animation = true, Effect = true are the defaults; Effect = false is the only way to turn it off).
     window._Skip = config.Skipmode == true
     -- HeaderTopbar = true : the top bar becomes a floating header card with the logo (Image), the title and button-style controls
     window._HeaderTopbar = config.HeaderTopbar == true
@@ -2746,14 +2747,29 @@ local function createWindowImpl(self, config)
     }, topBar)
     -- Window image is intentionally not shown here.
     -- config.Image is reserved for the FloatingButton logo.
-    local titleLeft = window._HeaderTopbar and 40 or 0
+    local titleLeft = 0 -- the title wrapper itself sits at x = 14 (no logo) or x = 54 (next to the header logo)
     if window._HeaderTopbar then
-        -- floating header card behind the title + controls
+        -- header topper: the SAME width as the UI library (edge to edge). Only its top follows the window's rounded corners.
+        local headerColor = lightUi and theme.Panel or Color3.fromRGB(21, 21, 24)
         local headerCard = new("Frame", {
-            Name = "HeaderCard", BackgroundColor3 = elementBox, BorderSizePixel = 0,
-            Position = UDim2.fromOffset(6, 5), Size = UDim2.new(1, -12, 0, 46), ZIndex = 9,
+            Name = "HeaderCard", BackgroundColor3 = headerColor, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 0, 58), ZIndex = 9,
         }, topBar)
-        styleElementBox(headerCard, 14)
+        corner(headerCard, WINDOW_RADIUS)
+        new("Frame", { -- squares off the lower corners of the header
+            Name = "HeaderFill", BackgroundColor3 = headerColor, BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 1, -(CORNER_LARGE + 1)), Size = UDim2.new(1, 0, 0, CORNER_LARGE + 1), ZIndex = 9,
+        }, headerCard)
+        local headerLine = new("Frame", { -- thin divider under the header
+            Name = "HeaderLine", BackgroundColor3 = lightUi and Color3.fromRGB(190, 194, 204) or Color3.fromRGB(60, 60, 66),
+            BorderSizePixel = 0, Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), ZIndex = 10,
+        }, headerCard)
+        new("UIGradient", {
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.12, 0.35),
+                NumberSequenceKeypoint.new(0.88, 0.35), NumberSequenceKeypoint.new(1, 1),
+            }),
+        }, headerLine)
         -- NEW logo: config.Image (lucide name, asset id or rbxassetid://) in a small button-style badge
         local badge = new("Frame", {
             Name = "Logo", BackgroundColor3 = elementBox, BorderSizePixel = 0,
@@ -2775,11 +2791,14 @@ local function createWindowImpl(self, config)
         end
         titleWrap.Position = UDim2.fromOffset(54, 8)
     end
+    -- the title shrinks with the window and never runs into the search bar / buttons on the right (306 px reserved)
+    titleWrap.Size = UDim2.new(1, -(titleWrap.Position.X.Offset + 306), 0, 42)
     local titleLabel = new("TextLabel", {
         BackgroundTransparency = 1,
         Text = tostring(config.name or "DarkyX Hub"),
         TextColor3 = theme.Text,
         Font = Enum.Font.GothamBold,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         TextSize = 17,
         TextXAlignment = Enum.TextXAlignment.Left,
         Position = UDim2.fromOffset(titleLeft, 0),
@@ -2874,50 +2893,45 @@ local function createWindowImpl(self, config)
     -- no depth layers, no darker fade, no border.
     -- ---------------------------------------------------------------
     local SEARCH_H = 46
-    local searchUi = {Open = false, Token = 0, Shift = Instance.new("NumberValue")}
+    local searchUi = {Open = true, Token = 0, Shift = Instance.new("NumberValue")}
     local searchDrawer = new("Frame", {
         Name = "SearchDrawer", BackgroundTransparency = 1, BorderSizePixel = 0, ClipsDescendants = true,
         Position = UDim2.fromOffset(0, 58), Size = UDim2.new(1, 0, 0, 0), Visible = false, ZIndex = 40,
     }, main)
+    -- Gen 2: the search bar is ALWAYS there (inside the header, see "HEADER SEARCH + TAB MENU" below). It is small and square
+    -- with a darker UIStroke border. No icon has to be clicked to open it.
     local searchPanel = new("Frame", {
         Name = "SearchBar",
-        BackgroundColor3 = elementBox,
+        BackgroundColor3 = lightUi and theme.Panel2 or Color3.fromRGB(11, 11, 13), -- darker than the buttons
         BorderSizePixel = 0,
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 6 - SEARCH_H),
-        Size = UDim2.new(1, -28, 0, 36),
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.fromOffset(140, 30),
         ZIndex = 41,
-    }, searchDrawer)
-    corner(searchPanel, UDim.new(1, 0)) -- UDim.new(1, 0): full pill shape
-    new("UIGradient", { -- same glass sheen as the element boxes
-        Name = "ElementSheen", Rotation = 90,
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-            ColorSequenceKeypoint.new(1, lightUi and Color3.fromRGB(240, 240, 240) or Color3.fromRGB(214, 214, 214)),
-        }),
-    }, searchPanel)
-    addTopLight(searchPanel, UDim.new(1, 0), 42, 1) -- same soft top light as the element boxes
+    }, searchDrawer) -- (moved into the header below)
+    corner(searchPanel, UDim.new(0, CORNER_MEDIUM))
+    window._SearchStroke = stroke(searchPanel, lightUi and Color3.fromRGB(170, 175, 186) or Color3.fromRGB(44, 44, 50), 0, 1)
     local searchPanelIcon = drawMagnifier(searchPanel, 16, theme.Muted, 43)
-    searchPanelIcon.Position = UDim2.new(0, 24, 0.5, 0)
+    searchPanelIcon.Position = UDim2.new(0, 18, 0.5, 0)
     local searchBox = new("TextBox", {
         BackgroundTransparency = 1,
         ClearTextOnFocus = false,
-        PlaceholderText = "Search current tab...",
+        PlaceholderText = "Search...",
         PlaceholderColor3 = theme.Muted,
         Text = "",
         TextColor3 = theme.Text,
         Font = Enum.Font.Gotham,
         TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Left,
-        Position = UDim2.fromOffset(44, 0),
-        Size = UDim2.new(1, -84, 1, 0),
+        Position = UDim2.fromOffset(32, 0),
+        Size = UDim2.new(1, -56, 1, 0),
         ZIndex = 44,
     }, searchPanel)
     -- clear button (x): only visible while there is text, one tap empties the search
     do
         local searchClear = new("TextButton", {
             Name = "Clear", AutoButtonColor = false, Text = "", BackgroundTransparency = 1, Visible = false,
-            AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(24, 24), ZIndex = 45,
+            AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -4, 0.5, 0), Size = UDim2.fromOffset(20, 20), ZIndex = 45,
         }, searchPanel)
         local _, setClearTint = drawCross(searchClear, 10, theme.Muted, 46)
         local function tintMagnifier(color)
@@ -3428,7 +3442,7 @@ local function createWindowImpl(self, config)
         for _, entry in ipairs(window._SearchItems) do
             if not entry.Floating then entry.Holder.Visible = entry.Tab == currentTab end
         end
-        if not searchUi.Open then return end
+        if true then return end -- Gen 2: the header search bar is always open, nothing slides
         searchUi.Open = false
         searchUi.Token += 1
         local mine = searchUi.Token
@@ -3734,9 +3748,15 @@ local function createWindowImpl(self, config)
     pcall(function()
         titleTextWidth = game:GetService("TextService"):GetTextSize(titleLabel.Text, titleLabel.TextSize, titleLabel.Font, Vector2.new(1000, 24)).X
     end)
-    local tagX = 14 + titleTextWidth + 10
-    local tagMaxWidth = math.max(40, windowWidth - 160 - tagX)
-    local tagLayer = new("Frame", {BackgroundTransparency=1, Position=UDim2.fromOffset(tagX, 8), Size=UDim2.fromOffset(tagMaxWidth, 24), ZIndex=24}, topBar)
+    -- (the title sits at titleWrap's x; the tags start after the title text and stop before the header search bar + buttons)
+    window._TagStart = function()
+        local wrapX = titleWrap.Position.X.Offset
+        local shown = math.min(titleTextWidth, math.max(windowWidth - (wrapX + 306), 0)) -- the title is cut at its wrapper's width
+        return wrapX + titleLeft + shown + 10
+    end
+    local tagX = window._TagStart()
+    local tagMaxWidth = math.max(0, windowWidth - 303 - tagX)
+    local tagLayer = new("Frame", {BackgroundTransparency=1, ClipsDescendants=true, Position=UDim2.fromOffset(tagX, 8), Size=UDim2.fromOffset(tagMaxWidth, 24), ZIndex=24}, topBar)
     new("UIListLayout", {FillDirection=Enum.FillDirection.Horizontal, HorizontalAlignment=Enum.HorizontalAlignment.Left, VerticalAlignment=Enum.VerticalAlignment.Center, Padding=UDim.new(0,5), SortOrder=Enum.SortOrder.LayoutOrder}, tagLayer)
 
     function window:CreateTag(tagConfig)
@@ -4042,7 +4062,9 @@ local function createWindowImpl(self, config)
             main.Size = target
             if visibleNow or not window.Visible then mainScale.Scale = windowScale end
         end
-        tagLayer.Size = UDim2.fromOffset(math.max(40, windowWidth - 160 - tagX), 24)
+        local startX = window._TagStart()
+        tagLayer.Position = UDim2.fromOffset(startX, 8)
+        tagLayer.Size = UDim2.fromOffset(math.max(0, windowWidth - 303 - startX), 24)
         if window._RefreshInterface then window._RefreshInterface() end
     end
 
@@ -4279,15 +4301,7 @@ local function createWindowImpl(self, config)
         if visible then
             if window._Minimized and window._SetMinimized then window._SetMinimized(false, true) end -- reopen = normal size
         end
-        if window._Skip then
-            -- Skipmode: no open / close animation, the window is just shown or hidden
-            endOpen()
-            main.Size = UDim2.fromOffset(windowWidth, windowHeight)
-            mainScale.Scale = windowScale
-            main.Visible = visible
-            floating.Visible = not visible
-            if not visible then placeFloatingAbove() end
-        elseif visible then
+        if visible then
             playOpen() -- the open animation takes care of the floating button
         else
             playClose()
@@ -4543,6 +4557,7 @@ local function createWindowImpl(self, config)
             content.Size = UDim2.fromOffset(windowWidth - 20, fullH - 68)
             content.Position = UDim2.fromOffset(state.ContentPos.X.Offset, state.ContentPos.Y.Offset - MIN_HEADER_H)
             searchButton.Visible, settingsButton.Visible = false, false
+            if window._SearchGroup then window._SearchGroup.Visible = false end
             bottomFade.Visible = false
             -- 2) the right box keeps its full size (it is NOT re-drawn every frame) and just fades out quickly
             if boxClip and boxClip:IsA("CanvasGroup") then
@@ -4594,6 +4609,7 @@ local function createWindowImpl(self, config)
                     boxClip.GroupTransparency = 0
                 end
                 searchButton.Visible, settingsButton.Visible = true, true
+                if window._SearchGroup then window._SearchGroup.Visible = true end
                 bottomFade.Visible = true
                 fadeState.bottom = false
                 bottomFade.BackgroundTransparency = 1
@@ -5545,6 +5561,196 @@ local function createWindowImpl(self, config)
     end)
 
     -- ---------------------------------------------------------------
+    -- HEADER SEARCH + TAB MENU (Gen 2)
+    --   [ tab-menu button ] [ search bar ]   sits in the header, left of the settings / minimize / close buttons.
+    --   * The search bar is always open, small and square with a darker UIStroke border (no icon to click).
+    --   * The tab-menu button opens a small box that lists every tab (icon + name). Click one: it opens at once.
+    -- (own block: keeps these locals out of the 200-locals limit of this big function)
+    -- ---------------------------------------------------------------
+    do
+        local rightPad = window._HeaderTopbar and 16 or 11
+        local group = new("Frame", {
+            Name = "SearchGroup", BackgroundTransparency = 1, BorderSizePixel = 0,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -(rightPad + 97 + 8), 0, window._HeaderTopbar and 14 or 11),
+            Size = UDim2.fromOffset(176, 29), ZIndex = 20,
+        }, topBar)
+        window._SearchGroup = group
+
+        -- the old magnifier button is no longer needed: park it in a hidden holder (other code still sets its Visible)
+        local parked = new("Frame", {Name = "Parked", BackgroundTransparency = 1, Visible = false, Size = UDim2.fromOffset(0, 0)}, main)
+        searchButton.Parent = parked
+
+        -- search bar -> header
+        searchPanel.Parent = group
+        searchPanel.Size = UDim2.new(0, 140, 1, 0)
+        searchPanel.Position = UDim2.new(1, 0, 0.5, 0)
+        searchPanel.AnchorPoint = Vector2.new(1, 0.5)
+        local searchLine = window._SearchStroke
+        searchBox.Focused:Connect(function()
+            if searchLine then tween(searchLine, 0.16, {Color = lightUi and Color3.fromRGB(110, 116, 132) or Color3.fromRGB(96, 96, 106)}) end
+        end)
+        searchBox.FocusLost:Connect(function()
+            if searchLine then tween(searchLine, 0.16, {Color = lightUi and Color3.fromRGB(170, 175, 186) or Color3.fromRGB(44, 44, 50)}) end
+        end)
+
+        -- tab-menu button (left of the search bar): a small 2 x 2 grid icon drawn in code
+        local menuButton = new("TextButton", {
+            Name = "TabMenuButton", AutoButtonColor = false, Text = "",
+            BackgroundColor3 = elementBox, BackgroundTransparency = 0,
+            Position = UDim2.fromOffset(0, 0), Size = UDim2.fromOffset(30, 29), ZIndex = 21,
+        }, group)
+        window._StyleButton(menuButton)
+        local cells = {}
+        do
+            local gridHolder = new("Frame", {
+                BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+                Size = UDim2.fromOffset(13, 13), ZIndex = 22,
+            }, menuButton)
+            for row = 0, 1 do
+                for col = 0, 1 do
+                    local cell = new("Frame", {
+                        BackgroundColor3 = theme.Muted, BorderSizePixel = 0,
+                        Position = UDim2.fromOffset(col * 7, row * 7), Size = UDim2.fromOffset(6, 6), ZIndex = 23,
+                    }, gridHolder)
+                    corner(cell, UDim.new(0, 2))
+                    table.insert(cells, cell)
+                end
+            end
+        end
+        local menuOpen = false
+        local function tintCells(color)
+            for _, cell in ipairs(cells) do tween(cell, 0.16, {BackgroundColor3 = color}) end
+        end
+        menuButton.MouseEnter:Connect(function() tintCells(theme.Text) end)
+        menuButton.MouseLeave:Connect(function() if not menuOpen then tintCells(theme.Muted) end end)
+
+        -- the tab list box
+        local catcher = new("TextButton", {
+            Name = "TabMenuCatcher", AutoButtonColor = false, Text = "", BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1), ZIndex = 58, Visible = false,
+        }, main)
+        local ROW_H, BOX_W = 32, 196
+        local box = new("Frame", {
+            Name = "TabMenu", BackgroundColor3 = lightUi and theme.Panel or Color3.fromRGB(17, 17, 20), BorderSizePixel = 0,
+            Position = UDim2.fromOffset(0, 0), Size = UDim2.fromOffset(BOX_W, 60), ZIndex = 60, Visible = false,
+        }, main)
+        corner(box, UDim.new(0, CORNER_LARGE))
+        stroke(box, lightUi and Color3.fromRGB(190, 194, 204) or Color3.fromRGB(60, 60, 66), 0.05, 1)
+        local boxScale = addScale(box, 1)
+        local boxList = new("ScrollingFrame", {
+            BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 1, -12),
+            CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 0,
+            ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 61,
+        }, box)
+        new("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder}, boxList)
+
+        local function clearRows()
+            for _, child in ipairs(boxList:GetChildren()) do
+                if child:IsA("GuiObject") then child:Destroy() end
+            end
+        end
+
+        local menuToken = 0
+        local function closeMenu()
+            if not menuOpen then return end
+            menuOpen = false
+            menuToken += 1
+            local mine = menuToken
+            catcher.Visible = false
+            tintCells(theme.Muted)
+            tween(boxScale, 0.14, {Scale = 0.94}, Enum.EasingStyle.Quint)
+            task.delay(0.15, function()
+                if mine == menuToken and box.Parent then box.Visible = false end
+            end)
+        end
+        window._CloseTabMenu = closeMenu
+
+        local function buildRows()
+            clearRows()
+            local shown = 0
+            for index, tab in ipairs(window.Tabs) do
+                shown += 1
+                local active = currentTab == tab
+                local row = new("TextButton", {
+                    AutoButtonColor = false, Text = "", LayoutOrder = index,
+                    BackgroundColor3 = lightUi and theme.Element or Color3.fromRGB(36, 36, 40),
+                    BackgroundTransparency = active and 0 or 1, BorderSizePixel = 0,
+                    Size = UDim2.new(1, 0, 0, ROW_H), ZIndex = 62,
+                }, boxList)
+                corner(row, UDim.new(0, CORNER_MEDIUM))
+                local icon = makeIcon(row, tab.IconData, 16, active and theme.Text or theme.Muted, 64)
+                local textLeft = 12
+                if icon then
+                    icon.AnchorPoint = Vector2.new(0, 0.5)
+                    icon.Position = UDim2.new(0, 10, 0.5, 0)
+                    textLeft = 34
+                end
+                local label = new("TextLabel", {
+                    BackgroundTransparency = 1, Text = tab.Name, TextColor3 = active and theme.Text or theme.Muted,
+                    Font = Enum.Font.GothamMedium, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Position = UDim2.fromOffset(textLeft, 0), Size = UDim2.new(1, -(textLeft + 44), 1, 0), ZIndex = 64,
+                }, row)
+                if tab.Side then
+                    new("TextLabel", {
+                        BackgroundTransparency = 1, Text = tab.Side, TextColor3 = theme.Faint or theme.Muted,
+                        Font = Enum.Font.Gotham, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Right,
+                        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 0), Size = UDim2.new(0, 36, 1, 0), ZIndex = 64,
+                    }, row)
+                end
+                row.MouseEnter:Connect(function()
+                    if currentTab ~= tab then
+                        tween(row, 0.12, {BackgroundTransparency = 0.6})
+                        tween(label, 0.12, {TextColor3 = theme.Text})
+                        if icon then tween(icon, 0.12, {ImageColor3 = theme.Text}) end
+                    end
+                end)
+                row.MouseLeave:Connect(function()
+                    if currentTab ~= tab then
+                        tween(row, 0.12, {BackgroundTransparency = 1})
+                        tween(label, 0.12, {TextColor3 = theme.Muted})
+                        if icon then tween(icon, 0.12, {ImageColor3 = theme.Muted}) end
+                    end
+                end)
+                row.MouseButton1Click:Connect(function()
+                    closeMenu()
+                    selectTab(tab) -- opens at once
+                end)
+            end
+            local height = math.clamp(shown * (ROW_H + 4) + 8, 44, 232)
+            box.Size = UDim2.fromOffset(BOX_W, height)
+            return shown
+        end
+
+        local function openMenu()
+            if menuOpen or window.Destroyed then return end
+            if #window.Tabs == 0 then return end
+            if settingsPageOpen then closeSettingsPage() end
+            buildRows()
+            menuOpen = true
+            menuToken += 1
+            -- place it right under the button (position inside the window, measured from the button)
+            local scale = math.max(mainScale.Scale, 0.01)
+            local rel = (menuButton.AbsolutePosition - main.AbsolutePosition) / scale
+            local x = math.clamp(rel.X, 6, math.max(6, windowWidth - BOX_W - 6))
+            box.Position = UDim2.fromOffset(x, rel.Y + menuButton.AbsoluteSize.Y / scale + 6)
+            boxScale.Scale = 0.94
+            box.Visible = true
+            catcher.Visible = true
+            tintCells(theme.Text)
+            tween(boxScale, 0.2, {Scale = 1}, Enum.EasingStyle.Quint)
+        end
+        menuButton.MouseButton1Click:Connect(function()
+            if menuOpen then closeMenu() else openMenu() end
+        end)
+        catcher.MouseButton1Click:Connect(closeMenu)
+        main:GetPropertyChangedSignal("Visible"):Connect(function() if not main.Visible then closeMenu() end end)
+        function window:OpenTabMenu() openMenu() end
+        function window:CloseTabMenu() closeMenu() end
+    end
+
+    -- ---------------------------------------------------------------
     -- Recolor system (the ColorPicker recolors live while it is edited; Settings > "Reset Window Theme" restores the originals):
     --   Toggle / Slider / Stat elements register themselves; the picker recolors one kind at a time.
     -- ---------------------------------------------------------------
@@ -5608,8 +5814,8 @@ local function createWindowImpl(self, config)
         local RunService = game:GetService("RunService")
         local panels = {} -- ["Left"] / ["Right"]
         local connection
-        local GAP, PAD, ROW_H, ROW_GAP = 12, 6, 38, 5
-        local MIN_W, MAX_W = 84, 190
+        local GAP, PAD, ROW_H, ROW_GAP = 12, 6, 60, 6
+        local MIN_W, MAX_W = 52, 100
 
         local function makePanel(side)
             local rec = {Side = side, Tabs = {}, Shown = false, Pop = Instance.new("NumberValue"), Width = MIN_W + PAD * 2 + 2}
@@ -5657,11 +5863,7 @@ local function createWindowImpl(self, config)
             for _, rec in pairs(panels) do
                 if show ~= rec.Shown then
                     rec.Shown = show
-                    if window._Skip then
-                        rec.Pop.Value = show and 1 or 0
-                    else
-                        tween(rec.Pop, show and 0.34 or 0.16, {Value = show and 1 or 0}, show and Enum.EasingStyle.Back or Enum.EasingStyle.Quint)
-                    end
+                    tween(rec.Pop, show and 0.34 or 0.16, {Value = show and 1 or 0}, show and Enum.EasingStyle.Back or Enum.EasingStyle.Quint)
                 end
                 local pop = rec.Pop.Value
                 local visible = pop > 0.01
@@ -5743,14 +5945,14 @@ local function createWindowImpl(self, config)
         }
 
         local verticalTab = sidebarLayout or side ~= nil
-        local TAB_TEXT_LEFT = verticalTab and 38 or 33
-        local TAB_RIGHT_PAD = verticalTab and 12 or 14
+        local TAB_TEXT_LEFT = side and 7 or (verticalTab and 38 or 33) -- floating tabs are tiles: the title sits under the icon
+        local TAB_RIGHT_PAD = side and 7 or (verticalTab and 12 or 14)
         local tabButton = new("TextButton", {
             AutoButtonColor = false,
             BackgroundColor3 = theme.Element,
             BackgroundTransparency = 1,
             Text = "",
-            Size = verticalTab and UDim2.new(1, 0, 0, side and 38 or 46) or UDim2.fromOffset(64, 34),
+            Size = verticalTab and UDim2.new(1, 0, 0, side and 60 or 46) or UDim2.fromOffset(64, 34),
             LayoutOrder = #window.Tabs + 1,
             ZIndex = 10,
         }, side and window._EnsureFloatPanel(side).List or tabBar)
@@ -5866,9 +6068,14 @@ local function createWindowImpl(self, config)
                 if token == fxToken and selectedBox.Parent then selectedBox.Visible = false end
             end)
         end
-        local icon = makeIcon(tabButton, tab.IconData, 16, theme.Muted, 13)
+        local icon = makeIcon(tabButton, tab.IconData, side and 26 or 16, theme.Muted, 13) -- tile tabs: a BIGGER icon
         if icon then
-            icon.Position = side and UDim2.fromOffset(13, 11) or (sidebarLayout and UDim2.fromOffset(14, 15) or UDim2.fromOffset(10, 9))
+            if side then
+                icon.AnchorPoint = Vector2.new(0.5, 0)
+                icon.Position = UDim2.new(0.5, 0, 0, 8)
+            else
+                icon.Position = sidebarLayout and UDim2.fromOffset(14, 15) or UDim2.fromOffset(10, 9)
+            end
             addScale(icon, 1)
         end
         local tabText = new("TextLabel", {
@@ -5876,11 +6083,11 @@ local function createWindowImpl(self, config)
             Text = tab.Name,
             TextColor3 = theme.Muted,
             Font = Enum.Font.GothamMedium,
-            TextSize = 11,
+            TextSize = side and 9 or 11, -- tile tabs: a SMALL title under the icon
             TextTruncate = Enum.TextTruncate.AtEnd,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Position = UDim2.fromOffset(TAB_TEXT_LEFT, 0),
-            Size = UDim2.new(1, -(TAB_TEXT_LEFT + TAB_RIGHT_PAD), 1, 0),
+            TextXAlignment = side and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left,
+            Position = side and UDim2.new(0, 3, 0, 38) or UDim2.fromOffset(TAB_TEXT_LEFT, 0),
+            Size = side and UDim2.new(1, -6, 0, 16) or UDim2.new(1, -(TAB_TEXT_LEFT + TAB_RIGHT_PAD), 1, 0),
             ZIndex = 14,
         }, tabButton)
         tab.TabButton = tabButton
@@ -8859,13 +9066,6 @@ local function createWindowImpl(self, config)
         if DarkyX._KeyDenied == true then window:Destroy() return end -- never show the UI without a verified key
         window.Visible = true
         floating.Visible = false
-        if window._Skip then
-            endOpen()
-            mainScale.Scale = windowScale
-            main.Size = UDim2.fromOffset(windowWidth, windowHeight)
-            main.Visible = true
-            return
-        end
         window._PlayIntro(1) -- rounded rectangle appears, then expands into the UI
     end
 
@@ -8984,6 +9184,7 @@ local function createWindowImpl(self, config)
             window.CreateTag = function() return inert() end
             content.Visible = false
             searchButton.Visible = false
+            if window._SearchGroup then window._SearchGroup.Visible = false end
             settingsButton.Visible = false
             titleWrap.Visible = false -- the loader panel shows the logo + title + subtitle itself
             tagLayer.Visible = false
