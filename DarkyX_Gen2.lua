@@ -2335,7 +2335,8 @@ local function createWindowImpl(self, config)
     -- LoaderAPI = { {Title=, URL=}, ... } turns the window into the small script loader (see "LOADER MODE" at the end of this
     -- function). The loader never uses the sidebar layout. Remove LoaderAPI and the window is the normal one again.
     local hasLoaderAPI = type(config.LoaderAPI) == "table" and next(config.LoaderAPI) ~= nil
-    local sidebarLayout = config.sidebarLayout == true and not hasLoaderAPI
+    local sidebarLayout = false -- Gen 2: the sidebar layout was REMOVED (sidebarLayout is ignored). Tabs live in the floating Left / Right rails,
+    --                             elements are added inside the UI library (the page area of the window).
     local SIDE_SCALE = 0.36 -- sidebarLayout = true: the sidebar is UDim2.new(0.36, 0, 1, 0) of the page area
     -- Auto: profile + username only exist when sidebarLayout = true (shown underneath the tab menu).
     -- When sidebarLayout = false they are automatically hidden (not created), so nothing can error.
@@ -5892,6 +5893,7 @@ local function createWindowImpl(self, config)
             for _, other in ipairs(rec.Tabs) do widest = math.max(widest, other.Width or 0) end
             rec.Width = math.clamp(widest, MIN_W, MAX_W) + EDGE * 2
             local count = #rec.Tabs
+            rec.Body.Visible = count > 0 and not window._Minimized
             local height = count * ROW_H + math.max(count - 1, 0) * ROW_GAP + EDGE * 2
             rec.Body.Size = UDim2.fromOffset(rec.Width, math.min(height, math.max(windowHeight, ROW_H + EDGE * 2)))
         end
@@ -5926,7 +5928,7 @@ local function createWindowImpl(self, config)
     function window:CreateTab(tabConfig, side)
         tabConfig = ci(tabConfig or {})
         if side == nil then side = tabConfig.side end
-        if side ~= nil then side = (string.lower(tostring(side)) == "right") and "Right" or "Left" end
+        side = (string.lower(tostring(side or "Left")) == "right") and "Right" or "Left" -- every tab is a Left or a Right tab
         local tab = {
             Name = tostring(tabConfig.name or ("Tab " .. (#window.Tabs + 1))),
             IconData = tabConfig.icon or "layout-dashboard",
