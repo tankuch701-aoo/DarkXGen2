@@ -4063,6 +4063,7 @@ local function createWindowImpl(self, config)
             if visibleNow or not window.Visible then mainScale.Scale = windowScale end
         end
         local startX = window._TagStart()
+        if window._FitRails then window._FitRails() end
         tagLayer.Position = UDim2.fromOffset(startX, 8)
         tagLayer.Size = UDim2.fromOffset(math.max(0, windowWidth - 303 - startX), 24)
         if window._RefreshInterface then window._RefreshInterface() end
@@ -4537,6 +4538,7 @@ local function createWindowImpl(self, config)
         state.Token += 1
         local token = state.Token
         window._Minimized = minimizing
+        if window._RailsSetMin then window._RailsSetMin(minimizing) end
         local duration = instant and 0 or 0.45
         local function guard() return token == state.Token and not window.Destroyed and main.Parent ~= nil end
 
@@ -5805,86 +5807,71 @@ local function createWindowImpl(self, config)
     -- =================================================================
     -- FLOATING SIDE TABS   window:CreateLeftTab({ Title = "Combat", Icon = 93364949241311 })
     --                      window:CreateRightTab({ Title = "Combat", Icon = 93364949241311 })
-    -- The tab menu is its OWN floating panel (a separate piece, a small gap away from the window - it is not welded to
-    -- the window). It follows the window when you move / scale it, pops in when the window opens and hides when the
-    -- window is closed, minimized or still animating. The tabs return the same object as window:CreateTab, so
+    -- The tab menu is its OWN floating rail (separate tiles a small gap away from the window - it is not welded to the
+    -- window). It is a child of the window, so it follows it when you move / scale it and hides with it. A rail only exists
+    -- on the side(s) you create tabs on: Left only -> only the left rail, Right only -> only the right rail, both -> both. The tabs return the same object as window:CreateTab, so
     -- Section / Button / Toggle / Slider ... all work on them. Only floating tabs used -> the top tab bar is hidden.
     -- =================================================================
     do
-        local RunService = game:GetService("RunService")
-        local panels = {} -- ["Left"] / ["Right"]
-        local connection
-        local GAP, PAD, ROW_H, ROW_GAP = 12, 6, 60, 6
-        local MIN_W, MAX_W = 52, 100
+        local panels = {} -- ["Left"] / ["Right"]  (a panel only exists once a tab was created on that side)
+        local GAP, ROW_H, ROW_GAP = 10, 60, 8
+        local MIN_W, MAX_W = 56, 92
+        local EDGE = 2 -- room for the 1 px border of every tile
+
+        -- the rail is a child of the window: it moves, scales and hides together with it (nothing is polled every frame)
+        local function railPos(rec, shift)
+            shift = shift or 0
+            if rec.Side == "Left" then return UDim2.new(0, -GAP + shift, 0, 0) end
+            return UDim2.new(1, GAP + shift, 0, 0)
+        end
 
         local function makePanel(side)
-            local rec = {Side = side, Tabs = {}, Shown = false, Pop = Instance.new("NumberValue"), Width = MIN_W + PAD * 2 + 2}
-            rec.Pop.Value = 0
-            rec.Holder = new("Frame", {
-                Name = "FloatTabs" .. side, BackgroundTransparency = 1, BorderSizePixel = 0, Active = false,
-                Position = UDim2.fromOffset(-2000, -2000), Size = UDim2.fromOffset(0, 0), ZIndex = 4, Visible = false,
-            }, screenGui)
+            local rec = {Side = side, Tabs = {}, Width = MIN_W + EDGE * 2}
             rec.Body = new("Frame", {
-                Name = "Body", BackgroundColor3 = lightUi and theme.Panel or Color3.fromRGB(12, 12, 14), BorderSizePixel = 0,
+                Name = "FloatTabs" .. side, BackgroundTransparency = 1, BorderSizePixel = 0, Active = false,
                 AnchorPoint = side == "Left" and Vector2.new(1, 0) or Vector2.new(0, 0),
-                Position = UDim2.fromOffset(0, 0), Size = UDim2.fromOffset(rec.Width, PAD * 2 + ROW_H + 2), ZIndex = 5,
-            }, rec.Holder)
-            corner(rec.Body, WINDOW_RADIUS)
-            stroke(rec.Body, lightUi and Color3.fromRGB(206, 208, 215) or Color3.fromRGB(60, 60, 66), 0.05, 1)
-            new("UIGradient", {
-                Name = "WindowSheen", Rotation = 90,
-                Color = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-                    ColorSequenceKeypoint.new(1, lightUi and Color3.fromRGB(238, 238, 238) or Color3.fromRGB(205, 205, 205)),
-                }),
-            }, rec.Body)
-            addTopLight(rec.Body, WINDOW_RADIUS, 5, 1, true)
-            rec.Scale = addScale(rec.Body, 1)
+                Position = railPos(rec), Size = UDim2.fromOffset(rec.Width, ROW_H + EDGE * 2), ZIndex = 20,
+            }, main)
             rec.List = new("ScrollingFrame", {
                 Name = "Tabs", BackgroundTransparency = 1, BorderSizePixel = 0,
-                Position = UDim2.fromOffset(PAD, PAD), Size = UDim2.new(1, -PAD * 2, 1, -PAD * 2),
+                Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(1, 1),
                 CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 6,
+                ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 21,
             }, rec.Body)
             new("UIListLayout", {Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder}, rec.List)
-            new("UIPadding", {PaddingLeft = UDim.new(0, 1), PaddingRight = UDim.new(0, 1), PaddingTop = UDim.new(0, 1), PaddingBottom = UDim.new(0, 1)}, rec.List)
+            new("UIPadding", {
+                PaddingLeft = UDim.new(0, EDGE), PaddingRight = UDim.new(0, EDGE),
+                PaddingTop = UDim.new(0, EDGE), PaddingBottom = UDim.new(0, EDGE),
+            }, rec.List)
             return rec
         end
 
-        -- every frame: stay beside the window, follow its scale, pop in / out with it
-        local function step()
-            if window.Destroyed or not main.Parent then
-                if connection then connection:Disconnect(); connection = nil end
-                return
-            end
-            local show = window.Visible and main.Visible and not openActive and not window._Held and not window._Minimized
-            local scale = mainScale.Scale
-            local mainPos, mainSize = main.AbsolutePosition, main.AbsoluteSize
+        -- slide out of the window's edge (used when the window finished opening / was restored)
+        local function playIn()
             for _, rec in pairs(panels) do
-                if show ~= rec.Shown then
-                    rec.Shown = show
-                    tween(rec.Pop, show and 0.34 or 0.16, {Value = show and 1 or 0}, show and Enum.EasingStyle.Back or Enum.EasingStyle.Quint)
-                end
-                local pop = rec.Pop.Value
-                local visible = pop > 0.01
-                if rec.Holder.Visible ~= visible then rec.Holder.Visible = visible end
-                if visible then
-                    local x = rec.Side == "Left" and (mainPos.X - GAP * scale) or (mainPos.X + mainSize.X + GAP * scale)
-                    local y = mainPos.Y
-                    if x ~= rec.LastX or y ~= rec.LastY then
-                        rec.LastX, rec.LastY = x, y
-                        rec.Holder.Position = UDim2.fromOffset(x, y)
-                    end
-                    local want = scale * (0.9 + 0.1 * math.clamp(pop, 0, 1.2))
-                    if rec.Scale.Scale ~= want then rec.Scale.Scale = want end
-                    -- the height follows the tab count but is never taller than the window
-                    local count = #rec.Tabs
-                    local height = math.min(count * ROW_H + math.max(count - 1, 0) * ROW_GAP + PAD * 2 + 2, windowHeight)
-                    local size = UDim2.fromOffset(rec.Width, height)
-                    if rec.Body.Size ~= size then rec.Body.Size = size end
-                end
+                rec.Body.Position = railPos(rec, rec.Side == "Left" and 26 or -26)
+                tween(rec.Body, 0.4, {Position = railPos(rec)}, Enum.EasingStyle.Quint)
             end
         end
+
+        local railToken = 0
+        window._RailsSetMin = function(minimizing)
+            railToken += 1
+            local mine = railToken
+            if minimizing then
+                for _, rec in pairs(panels) do rec.Body.Visible = false end
+            else
+                task.delay(0.32, function()
+                    if mine ~= railToken or window.Destroyed or window._Minimized then return end
+                    for _, rec in pairs(panels) do rec.Body.Visible = true end
+                    playIn()
+                end)
+            end
+        end
+        -- the open animation clips the window; when it is over (ClipsDescendants off) the rails slide out
+        main:GetPropertyChangedSignal("ClipsDescendants"):Connect(function()
+            if not main.ClipsDescendants and main.Visible and not window._Minimized then playIn() end
+        end)
 
         window._EnsureFloatPanel = function(side)
             side = (string.lower(tostring(side)) == "right") and "Right" or "Left"
@@ -5892,20 +5879,24 @@ local function createWindowImpl(self, config)
             if not rec then
                 rec = makePanel(side)
                 panels[side] = rec
-                if not connection then
-                    connection = RunService.RenderStepped:Connect(function() pcall(step) end)
-                end
+                if window._Minimized then rec.Body.Visible = false end
             end
             return rec
         end
 
-        -- width of a floating panel = the widest tab title
+        -- width = the widest tab title; height = the tabs, never taller than the window
         window._FitFloatPanel = function(side)
             local rec = panels[side]
             if not rec then return end
             local widest = 0
             for _, other in ipairs(rec.Tabs) do widest = math.max(widest, other.Width or 0) end
-            rec.Width = math.clamp(widest, MIN_W, MAX_W) + PAD * 2 + 2
+            rec.Width = math.clamp(widest, MIN_W, MAX_W) + EDGE * 2
+            local count = #rec.Tabs
+            local height = count * ROW_H + math.max(count - 1, 0) * ROW_GAP + EDGE * 2
+            rec.Body.Size = UDim2.fromOffset(rec.Width, math.min(height, math.max(windowHeight, ROW_H + EDGE * 2)))
+        end
+        window._FitRails = function()
+            for side in pairs(panels) do window._FitFloatPanel(side) end
         end
 
         -- only floating tabs in use: the top tab bar is hidden and the pages use its space
@@ -5971,8 +5962,15 @@ local function createWindowImpl(self, config)
         local TAB_CORNER = UDim.new(0, CORNER_MEDIUM) -- Gen 2: every tab uses the same small corner
         corner(selectedBox, TAB_CORNER)
         -- small grey border (UIStroke) on every tab button
-        corner(tabButton, TAB_CORNER)
-        stroke(tabButton, tabLight and Color3.fromRGB(208, 210, 217) or Color3.fromRGB(72, 72, 78), 0.1, 1)
+        if side then
+            -- floating tile: its own dark rounded button with the lit border (same look as every other button)
+            tabButton.BackgroundColor3 = elementBox
+            tabButton.BackgroundTransparency = 0
+            window._StyleButton(tabButton)
+        else
+            corner(tabButton, TAB_CORNER)
+            stroke(tabButton, tabLight and Color3.fromRGB(208, 210, 217) or Color3.fromRGB(72, 72, 78), 0.1, 1)
+        end
         -- LIGHT SOFT WHITE EFFECT of a selected tab: stronger than the original (1 = original), the same for Effect = true AND false.
         local TAB_LIGHT = 2.2
         local function tabLow(alpha) return math.clamp(1 - (1 - alpha) * TAB_LIGHT, 0, 1) end
